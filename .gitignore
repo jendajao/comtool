@@ -1,0 +1,4 @@
+# 執行期產生的檔案（設備輸出、pid、daemon 訊息）
+log/
+__pycache__/
+*.pyc
