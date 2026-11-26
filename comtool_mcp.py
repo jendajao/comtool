@@ -245,7 +245,7 @@ def t_com_list(args):
 
 def t_com_open(args):
     com, n = norm_port(args["port"])
-    baud = int(args.get("baud", 9600))
+    baud = int(args.get("baud", 115200))
     tcp = int(args.get("tcp_port") or 7000 + n)
     msg = []
     info = daemon_info(com)
@@ -370,7 +370,7 @@ TOOLS = [
      "PuTTY/telnet 可同時連 127.0.0.1 7000+N。",
      {"type": "object", "required": ["port"], "properties": {
          "port": PORT,
-         "baud": {"type": "integer", "default": 9600},
+         "baud": {"type": "integer", "default": 115200},
          "tcp_port": {"type": "integer", "description": "預設 7000+N"}}}),
     ("com_send", t_com_send,
      "送出文字到 COM port（預設自動加 CR），並等待回應。有 expect（regex）就等到符合或逾時；沒有就等到 idle 秒內沒有新資料。"

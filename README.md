@@ -31,26 +31,79 @@
 | `comd.py` | WSL 端 daemon。啟動 `bridge.ps1`，監聽 TCP，把 COM port 收到的資料廣播給所有 client 並寫入 log。 |
 | `comsend` | 命令列小工具。送出一行指令，等幾秒後印出回應。 |
 | `comtool_mcp.py` | MCP server，給 Claude Code 使用（見下方「MCP server」段落）。只用 Python 標準函式庫。 |
+| `install.sh` | 安裝腳本：檢查環境、建立 `comd`／`comsend` 捷徑、註冊 MCP server（見下方「安裝」段落）。 |
 | `log/COMx.log` | COM port 收到的所有原始資料（附加寫入）。 |
 | `log/COMx.pid` | comd 執行中時存在，內容為 `<pid> <tcp_port> <baud>`；comd 結束時自動刪除。 |
 | `log/COMx.comd.out` | 由 MCP 在背景啟動的 comd 的執行訊息（READY、client 連線紀錄、錯誤訊息）。 |
 
-`/usr/local/bin` 裡有 `comd`、`comsend` 兩個 symlink，可以直接執行。
+## 安裝
+
+### 需求
+
+- **WSL2**，而且要能在 WSL 裡執行 `powershell.exe`。這是 WSL 的 interop 功能，預設開啟；可以用 `powershell.exe -Command 1` 測試。
+- **Python 3.8 以上**，只用標準函式庫，不需要安裝套件。
+- **Windows PowerShell 5.1**，Windows 內建就有。
+- （選用）Windows 端要一起看時，需要 PuTTY，或在「開啟或關閉 Windows 功能」裡勾選「Telnet 用戶端」。
+- （選用）要讓 Claude Code 使用時，需要 Claude Code（CLI 或 VS Code 擴充套件）。
+
+### 使用 install.sh 安裝
+
+```bash
+git clone <repo-url> ~/tools/comtool
+cd ~/tools/comtool
+./install.sh
+```
+
+`install.sh` 會依序執行：
+
+1. **檢查環境**：WSL、`wslpath`、`powershell.exe`、Python 版本，任何一項不符就停止並說明原因。
+2. **設定執行權限**：對 `comd.py`、`comsend`、`comtool_mcp.py` 執行 `chmod +x`。
+3. **建立指令捷徑**：`comd`、`comsend` 的 symlink。
+   - root 使用者放在 `/usr/local/bin`，其他使用者放在 `~/.local/bin`。
+   - 同名檔案已經存在、而且不是指向本 repo 時，會跳過，不會覆蓋。
+   - 目錄不在 `PATH` 上時，會提醒你加入。
+4. **註冊 MCP server**（使用者層級，名稱 `comtool`）：
+   - 先在 `PATH` 上找 `claude`，找不到就用 VS Code 擴充套件內附的最新版本。
+   - 已經註冊過的話，會先移除再重新註冊，所以搬移 repo 後重跑一次就會更新路徑。
+   - 找不到 `claude` 時，會印出手動註冊的指令。
+5. **檢查 Windows 端連線**：如果 `.wslconfig` 設定了 `localhostForwarding=false`，會提醒 Windows 端連不到 `127.0.0.1:700N`（只提醒，不會修改設定）。
+
+| 選項 | 說明 |
+|---|---|
+| `--bin-dir DIR` | 指定捷徑放置的目錄 |
+| `--no-mcp` | 不註冊 MCP server；搭配 `--uninstall` 時則是不移除 |
+| `--uninstall` | 移除指向本 repo 的捷徑與 MCP 註冊；不會刪除 repo 和 `log/` |
+
+`install.sh` 可以重複執行。安裝或更新後，請**重開 Claude Code 的 session**，`com_*` 工具才會出現或更新。
+
+### 手動安裝
+
+不想用 `install.sh` 的話，可以手動執行：
+
+```bash
+cd ~/tools/comtool
+mkdir -p ~/.local/bin
+ln -sf "$PWD/comd.py" ~/.local/bin/comd
+ln -sf "$PWD/comsend" ~/.local/bin/comsend
+claude mcp add -s user comtool -- python3 "$PWD/comtool_mcp.py"   # 選用：給 Claude Code 使用
+```
+
+`log/` 目錄不在 repo 裡，第一次執行時會自動建立。
 
 ## 使用方式
 
 ### 1. 啟動 daemon
 
 ```bash
-comd COM3                      # 預設 9600 baud，監聽 127.0.0.1:7003
-comd COM1 --baud 115200        # 指定 baud rate
+comd COM3                      # 預設 115200 baud，監聽 127.0.0.1:7003
+comd COM1 --baud 9600          # 指定 baud rate
 comd COM3 --port 8003          # 指定 TCP port（預設為 7000 + COM 編號）
 ```
 
 daemon 會一直在前景執行，開啟成功時會印出：
 
 ```
-READY COM3@9600 tcp://127.0.0.1:7003
+READY COM3@115200 tcp://127.0.0.1:7003
 ```
 
 之後 client 連線或離線時，也會印出一行訊息。要結束時按 `Ctrl+C`，或送 SIGTERM，COM port 會隨之釋放。
@@ -111,10 +164,10 @@ tail -f /root/tools/comtool/log/COM3.log
 
 ### 註冊
 
-已在使用者層級註冊，所有專案都能用：
+`install.sh` 會自動在使用者層級註冊，所有專案都能用。手動註冊的方式如下：
 
 ```bash
-claude mcp add -s user comtool -- python3 /root/tools/comtool/comtool_mcp.py
+claude mcp add -s user comtool -- python3 <repo 路徑>/comtool_mcp.py
 ```
 
 - `claude` 不在 PATH 上時，請改用 VS Code 擴充套件內附的執行檔，例如 `/root/.vscode-server/extensions/anthropic.claude-code-<版本>-linux-x64/resources/native-binary/claude`。
@@ -126,7 +179,7 @@ claude mcp add -s user comtool -- python3 /root/tools/comtool/comtool_mcp.py
 | 工具 | 主要參數 | 功能 |
 |---|---|---|
 | `com_list` | — | 列出 Windows 的 COM port，以及各 port 的 comd 是否執行中、MCP 是否已連線 |
-| `com_open` | `port`、`baud`=9600、`tcp_port` | comd 沒在執行就在背景啟動（等到 READY，最多 15 秒），然後建立 MCP 連線；已在執行就直接連線 |
+| `com_open` | `port`、`baud`=115200、`tcp_port` | comd 沒在執行就在背景啟動（等到 READY，最多 15 秒），然後建立 MCP 連線；已在執行就直接連線 |
 | `com_send` | `port`、`text`、`expect`、`timeout`=10、`idle`=0.5、`newline`=true、`raw`=false、`strip_ansi`=true | 送出文字（預設加 CR）。有 `expect`（regex）就等到符合或逾時；沒有就等到 `idle` 秒內沒有新資料 |
 | `com_read` | `port`、`expect`、`timeout`=0 | 不送任何東西，讀取還沒讀過的輸出；可等待某段文字出現（例如看開機 log） |
 | `com_log` | `port`、`bytes`=4000 | 讀 `log/COMx.log` 的最後一段，可看到 MCP 連線之前的輸出 |
@@ -160,6 +213,7 @@ claude mcp add -s user comtool -- python3 /root/tools/comtool/comtool_mcp.py
 | COM1 | 主機板內建 UART | IE-SW-AL05LM-5TX | 9600 8N1 | `switch>` |
 | COM3 | FTDI USB Serial（VID_0403 / PID_6015） | IGS-C9082GP | 115200 8N1 | `IGS-C9082GP#` |
 
+- 預設 baud rate 是 115200。COM1 這台是 9600，開啟時要指定：`comd COM1 --baud 9600`，或 `com_open` 帶 `baud=9600`。
 - COM3 接的設備會更換（之前接的是 IE-SW-AL08M-6TX-2GT，9600 baud）。開啟前請先確認設備與 baud rate；收到亂碼或只有 `0x00` 時，就換 baud rate 再試。
 - 這幾台都是全螢幕的 CLI 登入畫面，用 `logout` 登出。
 - 在 Username 欄位輸入帳號後，設備只會回顯帳號、把游標移到 Password 欄位，不會再印出 `Password` 字樣；用 `com_send` 時，`expect` 請直接比對帳號本身。
@@ -183,7 +237,9 @@ claude mcp add -s user comtool -- python3 /root/tools/comtool/comtool_mcp.py
 |---|---|
 | 啟動時出現 `OPEN FAIL: ... 拒絕存取` | COM port 被其他程式（Tera Term、PuTTY 直連、另一個 comd）佔用，請先關掉該程式。 |
 | 啟動時出現 `TCP port 700N 無法使用` | 已經有另一個 comd 在執行，或該 port 被其他程式佔用。 |
-| 收到亂碼，或只收到 `0x00` | baud rate 不對，請用 `--baud` 試試其他速率（9600、19200、38400、57600、115200）。 |
+| 收到亂碼，或只收到 `0x00` | baud rate 不對（預設是 115200），請用 `--baud` 試試其他速率（9600、19200、38400、57600）。 |
+| `install.sh` 顯示「找不到 powershell.exe」 | WSL interop 沒有開啟，請檢查 `/etc/wsl.conf` 的 `[interop]` 設定，然後在 Windows 執行 `wsl --shutdown` 重新啟動 WSL。 |
+| `install.sh` 顯示捷徑「略過」 | 目標位置已經有同名檔案，或有指向其他地方的 symlink。確認不需要後刪除它，再重新執行 `install.sh`。 |
 | `comsend` 顯示「無法連到 COMx」 | comd 沒有在執行，或 TCP port 不是預設值（請設定 `COMSEND_PORT`）。 |
 | PuTTY 看不到自己輸入的字 | 請確認 Connection type 選 Telnet，且 Terminal → Local echo 維持 Auto。 |
 | Windows telnet 連不上 | 請確認用的是 `telnet 127.0.0.1 7003`（用空白隔開、用 127.0.0.1）。 |

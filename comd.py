@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Windows COM port <-> WSL TCP bridge daemon.
 
-usage: comd COMx [--baud 9600] [--port 7000+x]
+usage: comd COMx [--baud 115200] [--port 7000+x]
 
   Windows 端由 powershell.exe 執行 bridge.ps1 開啟 COM port，透過 stdio 轉送資料。
   WSL 端監聽 127.0.0.1:<port>，可多個 client 同時連線：
@@ -67,7 +67,7 @@ class Client:
 def main():
     ap = argparse.ArgumentParser(description="Windows COM port <-> TCP bridge")
     ap.add_argument("com", help="Windows COM port，例如 COM3")
-    ap.add_argument("--baud", type=int, default=9600)
+    ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--port", type=int, help="TCP port，預設 7000+N")
     a = ap.parse_args()
 
