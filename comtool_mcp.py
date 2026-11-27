@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """comtool MCP server（stdio，僅用 Python 標準函式庫）。
 
-由 Claude Code 啟動，對每個 COM port 維持一條連到 comd（127.0.0.1:700N）的 TCP 連線，
-提供 com_list / com_open / com_send / com_read / com_log / com_close 工具。
-MCP server 結束時只關閉自己的 TCP 連線，不會結束 comd。
+由 Claude Code 啟動，所有操作都透過 comhub（hubclient.py）：
+  - WSL 模式：連 <repo>/comtool.sock，hub 沒在執行時自動在背景啟動
+  - SSH 模式：<repo>/comtool.sock 由本機 Windows 的 hub（start_comtool.bat）執行 ssh -R 建立，轉送回 hub
+對每個 COM port 維持一條 attach 連線（console 原始資料流），
+提供 com_list / com_open / com_send / com_read / com_log / com_close / com_put_file 工具。
+MCP server 結束時只關閉自己的連線，不會結束 comd。
 """
-import json, os, re, signal, socket, subprocess, sys, threading, time
+import json, os, re, sys, threading, time
 
-HERE = os.path.dirname(os.path.realpath(__file__))
-LOGDIR = os.path.join(HERE, "log")
-COMD = os.path.join(HERE, "comd.py")
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import hubclient  # noqa: E402
+from hubclient import norm_port  # noqa: E402
+
 BUF_MAX = 1 << 20
-SERVER_INFO = {"name": "comtool", "version": "1.0.0"}
+SERVER_INFO = {"name": "comtool", "version": "1.1.0"}
 
 
 def log(*a):
@@ -68,49 +72,12 @@ class TelnetStripper:
         return bytes(out)
 
 
-# ---------------------------------------------------------------- comd 狀態
-def norm_port(port):
-    p = str(port).strip().upper()
-    if p.isdigit():
-        p = "COM" + p
-    m = re.fullmatch(r"COM(\d+)", p)
-    if not m:
-        raise ValueError(f"COM port 名稱錯誤: {port}")
-    return p, int(m.group(1))
-
-
-children = []  # 由 com_open 啟動的 comd，定期回收以免變成 zombie
-
-
-def daemon_info(com):
-    """回傳 (pid, tcp_port, baud)；沒有在執行則回傳 None（並清掉殘留的 pidfile）。"""
-    for p in list(children):
-        if p.poll() is not None:
-            children.remove(p)
-    path = os.path.join(LOGDIR, com + ".pid")
-    try:
-        with open(path) as f:
-            pid, tcp, baud = (int(x) for x in f.read().split()[:3])
-    except (OSError, ValueError):
-        return None
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-        return None
-    except PermissionError:
-        pass
-    return pid, tcp, baud
-
-
 # ---------------------------------------------------------------- 連線
 class Conn:
-    def __init__(self, com, tcp_port):
-        self.com, self.tcp_port = com, tcp_port
-        self.sock = socket.create_connection(("127.0.0.1", tcp_port), timeout=3)
+    def __init__(self, com, sock, early=b""):
+        """sock 是已經對 hub 送過 attach 的連線；early 是 attach 回應之後已經讀到的資料。"""
+        self.com = com
+        self.sock = sock
         self.sock.settimeout(None)
         self.cv = threading.Condition()
         self.buf = bytearray()
@@ -119,6 +86,9 @@ class Conn:
         self.last_rx = 0.0
         self.closed = False
         self.strip = TelnetStripper()
+        if early:
+            self.buf += self.strip.feed(early)
+            self.last_rx = time.monotonic()
         threading.Thread(target=self._rx, daemon=True).start()
 
     @property
@@ -208,7 +178,7 @@ def get_conn(com):
     if c and c.closed:
         c.close()
         conns.pop(com, None)
-        raise RuntimeError(f"{com} 與 comd 的連線已中斷（comd 可能已結束），請重新 com_open")
+        raise RuntimeError(f"{com} 的連線已中斷（comd 已結束，或 SSH 斷線），請重新 com_open")
     if not c:
         raise RuntimeError(f"{com} 尚未開啟，請先呼叫 com_open")
     return c
@@ -216,73 +186,41 @@ def get_conn(com):
 
 # ---------------------------------------------------------------- 工具實作
 def t_com_list(args):
-    ps = ("[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
-          "Get-CimInstance Win32_PnPEntity | Where-Object { $_.Name -match '\\(COM\\d+\\)' } |"
-          " ForEach-Object { $_.Name + '|' + $_.DeviceID }")
-    lines = []
-    try:
-        out = subprocess.run(["powershell.exe", "-NoProfile", "-Command", ps], capture_output=True,
-                             timeout=30).stdout.decode("utf-8", "replace")
-        for row in out.splitlines():
-            if "|" not in row:
-                continue
-            name, dev = row.strip().split("|", 1)
-            m = re.search(r"\((COM\d+)\)", name)
-            if m:
-                lines.append((m.group(1), name, dev))
-    except Exception as e:
-        return f"查詢 Windows COM port 失敗: {e}"
-    lines.sort(key=lambda x: int(x[0][3:]))
-    res = []
-    for com, name, dev in lines:
-        info = daemon_info(com)
-        st = f"comd 執行中（pid {info[0]}, tcp {info[1]}, {info[2]} baud）" if info else "comd 未執行"
-        if com in conns and not conns[com].closed:
+    resp, greet = hubclient.request({"cmd": "list"}, timeout=60)
+    res = [hubclient.describe(greet, hubclient.hub_address())]
+    for p in resp.get("ports", []):
+        d = p.get("daemon")
+        st = f"comd 執行中（pid {d['pid']}, tcp {d['tcp']}, {d['baud']} baud）" if d else "comd 未執行"
+        if p["port"] in conns and not conns[p["port"]].closed:
             st += "，MCP 已連線"
-        res.append(f"{com}: {name} [{dev}] — {st}")
-    return "\n".join(res) or "找不到任何 COM port"
+        res.append(f"{p['port']}: {p['name']} [{p['dev']}] — {st}")
+    if len(res) == 1:
+        res.append("找不到任何 COM port")
+    return "\n".join(res)
 
 
 def t_com_open(args):
-    com, n = norm_port(args["port"])
-    baud = int(args.get("baud", 115200))
-    tcp = int(args.get("tcp_port") or 7000 + n)
-    msg = []
-    info = daemon_info(com)
-    if info:
-        tcp = info[1]
-        msg.append(f"comd 已在執行（pid {info[0]}, {info[2]} baud, tcp {tcp}）")
-        if info[2] != baud and "baud" in args:
-            msg.append(f"注意：comd 目前是 {info[2]} baud，與要求的 {baud} 不同；要改速率請先 com_close")
+    com, _ = norm_port(args["port"])
+    req = {"cmd": "open", "port": com, "baud": int(args.get("baud", 115200))}
+    if "baud" not in args:
+        del req["baud"]
+    if args.get("tcp_port"):
+        req["tcp_port"] = int(args["tcp_port"])
+    resp, greet = hubclient.request(req, timeout=30)
+    tcp = resp["tcp"]
+    if resp.get("started"):
+        msg = [f"已啟動 comd（pid {resp['pid']}, {resp['baud']} baud, tcp {tcp}）"]
     else:
-        os.makedirs(LOGDIR, exist_ok=True)
-        outpath = os.path.join(LOGDIR, com + ".comd.out")
-        out = open(outpath, "ab")
-        start = out.tell()
-        p = subprocess.Popen([sys.executable, COMD, com, "--baud", str(baud), "--port", str(tcp)],
-                             stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
-                             start_new_session=True, close_fds=True)
-        out.close()
-        children.append(p)
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:
-            if daemon_info(com):
-                break
-            if p.poll() is not None:
-                with open(outpath, "rb") as f:
-                    f.seek(start)
-                    err = f.read().decode("utf-8", "replace").strip()
-                raise RuntimeError(f"comd 啟動失敗（exit {p.returncode}）：{err}")
-            time.sleep(0.2)
-        else:
-            p.terminate()
-            raise RuntimeError("等待 comd READY 逾時（15 秒）")
-        msg.append(f"已啟動 comd（pid {p.pid}, {baud} baud, tcp {tcp}）")
+        msg = [f"comd 已在執行（pid {resp['pid']}, {resp['baud']} baud, tcp {tcp}）"]
+    if resp.get("warning"):
+        msg.append("注意：" + resp["warning"])
     old = conns.pop(com, None)
     if old:
         old.close()
-    conns[com] = Conn(com, tcp)
-    msg.append(f"MCP 已連線到 127.0.0.1:{tcp}；PuTTY/telnet 可同時連 127.0.0.1 {tcp}")
+    sock, early, _ = hubclient.attach(com)
+    conns[com] = Conn(com, sock, early)
+    where = "本機 Windows 上" if greet.get("platform") == "windows" else "WSL 或 Windows 上"
+    msg.append(f"MCP 已連線；{where}的 PuTTY/telnet 可同時連 127.0.0.1 {tcp}")
     return "\n".join(msg)
 
 
@@ -322,19 +260,11 @@ def t_com_read(args):
 def t_com_log(args):
     com, _ = norm_port(args["port"])
     n = min(int(args.get("bytes", 4000)), BUF_MAX)
-    path = os.path.join(LOGDIR, com + ".log")
-    try:
-        with open(path, "rb") as f:
-            f.seek(0, 2)
-            size = f.tell()
-            f.seek(max(0, size - n))
-            data = f.read()
-    except OSError as e:
-        raise RuntimeError(f"讀取 {path} 失敗: {e}")
-    text = data.decode("utf-8", "replace")
+    resp, _ = hubclient.request({"cmd": "log", "port": com, "bytes": n})
+    text = resp["text"]
     if args.get("strip_ansi", True):
         text = clean(text)
-    return f"[{path}，共 {size} bytes，顯示最後 {len(data)} bytes]\n{text}"
+    return f"[{resp['path']}，共 {resp['size']} bytes，顯示最後 {resp['shown']} bytes]\n{text}"
 
 
 def t_com_close(args):
@@ -345,29 +275,27 @@ def t_com_close(args):
         c.close()
         msg.append("已中斷 MCP 連線")
     if args.get("stop_daemon", True):
-        info = daemon_info(com)
-        if info:
-            os.kill(info[0], signal.SIGTERM)
-            deadline = time.monotonic() + 8
-            while time.monotonic() < deadline and daemon_info(com):
-                time.sleep(0.2)
-            if daemon_info(com):
-                msg.append(f"comd（pid {info[0]}）尚未結束，請檢查")
-            else:
-                msg.append(f"已結束 comd（pid {info[0]}），{com} 已釋放")
-        else:
-            msg.append("comd 未在執行")
+        resp, _ = hubclient.request({"cmd": "close", "port": com})
+        msg.append(resp["message"])
     return "\n".join(msg) or "沒有需要關閉的連線"
+
+
+def t_com_put_file(args):
+    r = hubclient.put_file(args["path"], args.get("name") or None)
+    return (f"[{r['status']} {r['secs']:.2f}s]\n"
+            f"{r['src']} → {r['path']}\n"
+            f"{r['size']} bytes, md5 {r['md5']}")
 
 
 PORT = {"type": "string", "description": "Windows COM port，例如 COM3"}
 STRIP = {"type": "boolean", "default": True, "description": "去掉 ANSI 跳脫碼（游標定位換成換行）"}
 TOOLS = [
-    ("com_list", t_com_list, "列出 Windows 的 COM port，以及各 port 的 comd 執行狀態與 MCP 連線狀態。",
+    ("com_list", t_com_list,
+     "列出 hub 所在 Windows 的 COM port，以及各 port 的 comd 執行狀態與 MCP 連線狀態；第一行是 hub 的位置與 TFTP 根目錄。",
      {"type": "object", "properties": {}}),
     ("com_open", t_com_open,
-     "開啟 COM port：comd 沒在執行就在背景啟動它，然後建立 MCP 的持續連線。comd 會一直執行到 com_close，"
-     "PuTTY/telnet 可同時連 127.0.0.1 7000+N。",
+     "開啟 COM port：comd 沒在執行就由 hub 啟動它，然後建立 MCP 的持續連線。comd 會一直執行到 com_close，"
+     "hub 所在的機器上 PuTTY/telnet 可同時連 127.0.0.1 7000+N。",
      {"type": "object", "required": ["port"], "properties": {
          "port": PORT,
          "baud": {"type": "integer", "default": 115200},
@@ -392,6 +320,14 @@ TOOLS = [
          "expect": {"type": "string", "description": "等待的 regex"},
          "timeout": {"type": "number", "default": 0, "description": "最長等待秒數（上限 600）"},
          "strip_ansi": STRIP}}),
+    ("com_put_file", t_com_put_file,
+     "把檔案（例如 firmware image）傳到 hub 所在機器的 TFTP 根目錄，讓設備用 TFTP 下載。"
+     "hub 會比對 md5，已有相同檔案時不重傳；寫入完成才換成正式檔名，設備不會抓到寫一半的檔案。"
+     "回傳第一行為 [uploaded 秒數] 或 [same 秒數]。",
+     {"type": "object", "required": ["path"], "properties": {
+         "path": {"type": "string", "description": "要傳的檔案路徑（MCP server 所在機器上；相對路徑以 MCP 的工作目錄為準）"},
+         "name": {"type": "string",
+                  "description": "存到 TFTP 根目錄的檔名，預設與原檔名相同；只能用英數字與 . _ -"}}}),
     ("com_log", t_com_log, "讀取 comd 的 log 檔（log/COMx.log）最後一段，可看到 MCP 連線之前的輸出。",
      {"type": "object", "required": ["port"], "properties": {
          "port": PORT,

@@ -2,3 +2,5 @@
 log/
 __pycache__/
 *.pyc
+comtool.sock
+comhub.ini

@@ -1,0 +1,26 @@
+#!/usr/bin/env python3
+# 輔助工具（自動化用）：comtool 主要給 Claude Code 透過 MCP 使用，傳檔請用 MCP 的 com_put_file。
+# comput 是同一個功能的命令列版本（同樣呼叫 hubclient.put_file()），給不經過 Claude 的
+# build script 等自動化使用，例如編譯完自動把 firmware 放進 TFTP 根目錄。
+# 經由 hub 傳檔：WSL 模式在 WSL 執行（hub 會自動啟動）；SSH 模式在 build server 執行，
+# 要先在本機 Windows 雙擊 start_comtool.bat。
+"""把檔案傳到 comhub 所在機器的 TFTP 根目錄。
+
+usage: comput FILE [NAME]
+  NAME 預設與原檔名相同（只能用英數字與 . _ -）。
+  hub 位置與 comtool_mcp.py 相同：預設 <repo>/comtool.sock，可用環境變數 COMTOOL_HUB 覆寫。
+"""
+import os, sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import hubclient  # noqa: E402
+
+args = sys.argv[1:]
+if not 1 <= len(args) <= 2 or args[0] in ("-h", "--help"):
+    sys.exit(__doc__)
+try:
+    r = hubclient.put_file(args[0], args[1] if len(args) > 1 else None)
+except (hubclient.HubError, OSError) as e:
+    sys.exit(f"comput: {e}")
+print(f"[{r['status']} {r['secs']:.2f}s] {r['src']} → {r['path']}")
+print(f"{r['size']} bytes, md5 {r['md5']}")

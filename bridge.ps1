@@ -1,4 +1,6 @@
 param([string]$Port="COM3",[int]$Baud=115200)
+# stderr control messages (OPENED / OPEN FAIL + exception text) in UTF-8 without BOM; comd decodes UTF-8. stdout is raw bytes, unaffected.
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch {}
 $p = New-Object System.IO.Ports.SerialPort $Port,$Baud,'None',8,'One'
 $p.Handshake='None'; $p.DtrEnable=$true; $p.RtsEnable=$true
 try { $p.Open() } catch { [Console]::Error.WriteLine("OPEN FAIL: $($_.Exception.Message)"); exit 2 }

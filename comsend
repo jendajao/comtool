@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# 輔助工具（除錯用）：comtool 主要給 Claude Code 透過 MCP 使用，送指令請用 MCP 的 com_send。
+# comsend 不經過 hub 與 MCP，直接連 comd 的 127.0.0.1:700N，用來單獨測試 comd
+# （例如修改 comd 之後，確認問題出在 comd 還是 hub／MCP）。
+# 必須和 comd 在同一台機器執行：WSL 模式在 WSL；SSH 模式在本機 Windows（python comsend ...），
+# build server 上不能用。comd 要先啟動（com_open 或手動執行 comd），comsend 不會啟動它。
 """送指令到 comd 並印出回應。
 
 usage: comsend [--raw] COMx "指令" [等待秒數，預設 1]
