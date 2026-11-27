@@ -7,7 +7,7 @@ usage: comhub.py [--listen unix:PATH|tcp:PORT] [--ssh USER@HOST:REMOTE_SOCK ...]
   SSH 模式：使用者在本機 Windows 雙擊 start_comtool.bat 執行本程式。個人設定讀同目錄的 comhub.ini
     （[ssh] user/host/repo、[hub] tftp_root；命令列參數優先）。每個 --ssh 由一個 Tunnel 執行緒
     執行 `ssh -R REMOTE_SOCK:127.0.0.1:7000`，維持 tunnel、斷線重建、清除 build server 上殘留的 socket。
-  WSL 模式：由 comtool_mcp.py 在需要時自動於背景啟動，不需要 comhub.ini。
+  WSL 模式：由 comtool_mcp.py 在需要時自動於背景啟動，不需要 comhub.ini；有的話只讀 tftp_root，忽略 [ssh]。
 
 協定（JSON 一行一個訊息）：連線後 hub 先送問候訊息，client 送一個請求：
   info / list / open / close / log：回一個 JSON 後關閉
@@ -657,25 +657,30 @@ repo = <build server 上的 repo 路徑，例如 /home/<帳號>/tools/comtool>
 tftp_root =        ; TFTP 根目錄，留空表示自動讀 tftpd64.ini"""
 
 
-def load_ini():
-    """讀 comhub.ini，回傳 (ssh spec 清單, tftp_root)；沒有檔案回傳 ([], None)。"""
+def load_ini(with_ssh=True):
+    """讀 comhub.ini，回傳 (ssh spec 清單, tftp_root, 是否略過了 [ssh])；沒有檔案回傳 ([], None, False)。
+
+    with_ssh=False（非 Windows 的 hub）時不解析也不驗證 [ssh]：它是 SSH 模式給本機 Windows 的 hub 用的，
+    WSL 模式的 hub 監聽 unix socket，套用它會讓 hub 無法啟動。"""
     if not os.path.exists(INI):
-        return [], None
+        return [], None, False
     cp = configparser.ConfigParser(inline_comment_prefixes=(";", "#"), interpolation=None)
     try:
         with open(INI, encoding="utf-8-sig") as f:
             cp.read_file(f)
     except (OSError, configparser.Error, UnicodeDecodeError) as e:
         sys.exit(f"{INI} 格式錯誤: {e}")
-    specs = []
+    specs, skipped = [], False
     if cp.has_section("ssh"):
         user, host, repo = (cp.get("ssh", k, fallback="").strip() for k in ("user", "host", "repo"))
-        if host or repo or user:
+        if (host or repo or user) and not with_ssh:
+            skipped = True
+        elif host or repo or user:
             if not host or not repo.startswith("/"):
                 sys.exit(f"{INI} 的 [ssh] 要填 host 與 repo（repo 是 build server 上的絕對路徑）")
             specs.append(f"{user + '@' if user else ''}{host}:{repo.rstrip('/')}/comtool.sock")
     tftp = cp.get("hub", "tftp_root", fallback="").strip() or None
-    return specs, tftp
+    return specs, tftp, skipped
 
 
 class Hub:
@@ -894,7 +899,7 @@ def main():
                                         "tftpd64.ini 的 BaseDirectory）")
     ap.add_argument("--max-size", type=int, default=256, help="傳檔大小上限（MB），預設 256")
     a = ap.parse_args()
-    ini_specs, ini_tftp = load_ini()
+    ini_specs, ini_tftp, ini_ssh_skipped = load_ini(with_ssh=IS_WIN)
     specs = a.ssh or ini_specs
     if IS_WIN and not specs and not a.listen:
         sys.exit(f"找不到 {INI}，不知道要連哪台 build server。\n\n"
@@ -937,6 +942,8 @@ def main():
         signal.signal(signal.SIGHUP, stop)
 
     log(f"comhub 啟動：{PLATFORM}，監聽 {fmt_addr(addr)}，TFTP 根目錄 {root or '未設定'}（{src}）")
+    if ini_ssh_skipped and not a.ssh:
+        log(f"略過 {INI} 的 [ssh]：SSH 模式的設定只在本機 Windows 的 hub 使用")
     if root and not os.path.isdir(root):
         log(f"警告：TFTP 根目錄不存在: {root}")
     atexit.register(stop_tunnels)

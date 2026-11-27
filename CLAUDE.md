@@ -62,7 +62,7 @@ comsend / PuTTY ──TCP 127.0.0.1:7000+N──▶ comd.py（與 hub 在同一�
   - Python 的程序名稱不一定是 `python.exe`（Microsoft Store 版是 `python3.12.exe`），CIM 查詢要用 `Name LIKE 'python%'`。
   - 從 Claude 的 shell 產生 `.bat` 時，`>nul` 可能被工具環境改寫成 `>/dev/null`；`start_comtool.bat` 要用 Python 寫入並檢查內容（CRLF、純 ASCII）。
 - **Telnet 協商**：comd 在 client 連上時主動送 `IAC WILL ECHO, IAC WILL SGA`，並把設備輸出中的 `0xFF` 跳脫成 `0xFF 0xFF`（只對送過 IAC 的 client）。因此三個地方各有一份 telnet 過濾邏輯：`comd.py` 的 `Client.filter`（client→設備）、`comsend` 的 `strip_telnet`、`comtool_mcp.py` 的 `TelnetStripper`（後兩者是設備→client，後者可跨 recv 邊界）。hub 的 attach 只是原樣轉送，不處理 telnet。
-- **預設值重複出現**：baud 預設 115200 寫在 `comd.py`、`bridge.ps1`、`comhub.py`（`open`）、`comtool_mcp.py`（tool schema）、`INSTALL.md` 的驗證說明；TCP port 預設 `7000 + COM 編號` 寫在 comd、comsend、comhub 三處；hub 的 TCP port 7000 寫在 `hubclient.py`（`HUB_TCP_PORT`，comhub 引用）、`INSTALL.md`、`README.md`。`comhub.ini` 的欄位（`[ssh] user/host/repo`、`[hub] tftp_root`）寫在 `comhub.py`（`load_ini()`、`INI_TEMPLATE`）、`INSTALL.md` 步驟 8、`README.md` A 節；TFTP 根目錄的優先順序（`--tftp-root` → ini → `COMTOOL_TFTP_ROOT` → tftpd64.ini）寫在 `comhub.main()` 與 README。
+- **預設值重複出現**：baud 預設 115200 寫在 `comd.py`、`bridge.ps1`、`comhub.py`（`open`）、`comtool_mcp.py`（tool schema）、`INSTALL.md` 的驗證說明；TCP port 預設 `7000 + COM 編號` 寫在 comd、comsend、comhub 三處；hub 的 TCP port 7000 寫在 `hubclient.py`（`HUB_TCP_PORT`，comhub 引用）、`INSTALL.md`、`README.md`。`comhub.ini` 的欄位（`[ssh] user/host/repo`、`[hub] tftp_root`）寫在 `comhub.py`（`load_ini()`、`INI_TEMPLATE`）、`INSTALL.md` 步驟 7、`README.md` A 節，非 Windows 的 hub 忽略 ini 的 `[ssh]`（`load_ini(with_ssh=IS_WIN)`），否則 WSL 模式的 unix 監聽會跟 tunnel 衝突而無法啟動；TFTP 根目錄的優先順序（`--tftp-root` → ini → `COMTOOL_TFTP_ROOT` → tftpd64.ini）寫在 `comhub.main()` 與 README。
 
 ### comtool_mcp.py
 

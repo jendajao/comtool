@@ -13,21 +13,21 @@ repo 可以放在任何位置，Claude Code 的安裝方式與 MCP 設定位置�
    請依照 INSTALL.md 幫我安裝 comtool
    ```
 
-Claude 會依照下面的「安裝步驟」逐一檢查環境並安裝。遇到需要你決定的地方（捷徑放哪個目錄、MCP 要註冊在哪個 scope、是否覆蓋已存在的檔案或註冊），會先問你。
+Claude 會依照下面的「安裝步驟」逐一檢查環境並安裝。遇到需要你決定的地方（MCP 要註冊在哪個 scope、是否覆蓋已存在的檔案或註冊），會先問你。
 
 有些步驟 Claude 做不到（例如 SSH 模式下你本機 Windows 上的設定、重開 Claude Code 的 session），這些步驟標示 **👤 使用者手動**，Claude 會在最後逐項提醒你。README 的「安裝 → ⚠ 需要你手動做的事」也列了同一份清單。
 
 > **給 Claude 的說明**：請依序執行下面每個步驟，每一步都先檢查、再動手。下列情況一律先詢問使用者，不要自行決定：
 > - 要覆蓋或刪除已存在的檔案、symlink（包括已存在的 `comhub.ini`）
 > - 要移除或取代已存在的 `comtool` MCP 註冊
-> - 捷徑目錄與 MCP scope 的選擇（可以提出建議的預設值）
+> - MCP scope 的選擇（可以提出建議的預設值）
 > - 需要 `sudo` 或修改 `~/.bashrc`、`/etc/wsl.conf`、`.wslconfig` 等系統或 shell 設定
 >
-> 標示 **👤 使用者手動** 的步驟你做不到或不該代做，不要嘗試；全部做完後，先列出實際做了什麼（捷徑路徑、使用的 `claude` 執行檔、MCP scope 與註冊的指令、產生的 `comhub.ini` 內容），再**逐項提醒使用者所有 👤 步驟**：
-> - WSL 模式：重開 Claude Code 的 session；如果步驟 2 或 6 要修改 `/etc/wsl.conf`、`.wslconfig`，提醒在 Windows 執行 `wsl --shutdown`（會中斷 WSL 裡的你，所以要使用者自己做）。
+> 標示 **👤 使用者手動** 的步驟你做不到或不該代做，不要嘗試；全部做完後，先列出實際做了什麼（使用的 `claude` 執行檔、MCP scope 與註冊的指令、產生的 `comhub.ini` 內容），再**逐項提醒使用者所有 👤 步驟**：
+> - WSL 模式：重開 Claude Code 的 session；如果步驟 2 或 5 要修改 `/etc/wsl.conf`、`.wslconfig`，提醒在 Windows 執行 `wsl --shutdown`（會中斷 WSL 裡的你，所以要使用者自己做）。
 > - SSH 模式：「SSH 模式：Windows 端」的 W1～W4 全部（安裝 Python、`scp -r` 複製 repo、金鑰登入與 host key、拿掉舊的 RemoteForward、雙擊 `start_comtool.bat`），以及重開 Claude Code 的 session。把其中的 `<帳號>`、`<build server IP>`、`<build server 上的 repo 路徑>` 換成實際的值（repo 路徑就是 `$REPO`）。
 >
-> 使用者只要求「請依照 INSTALL.md 幫我產生 comhub.ini」時，只做步驟 8，然後提醒使用者重做 W1（`scp -r`）把它帶到 Windows。
+> 使用者只要求「請依照 INSTALL.md 幫我產生 comhub.ini」時，只做步驟 7，然後提醒使用者重做 W1（`scp -r`）把它帶到 Windows。
 
 ## 兩種模式
 
@@ -75,7 +75,7 @@ python3 -c 'import sys; print(sys.version); assert sys.version_info >= (3, 8)'
   command -v wslpath                                     # WSL 內建工具
   powershell.exe -NoProfile -NonInteractive -Command 1   # 應輸出 1
   ```
-- 不是 WSL，而且 `SSH_CONNECTION` 有值 → **SSH 模式**（Claude Code 跑在 build server 上）。這台機器不需要 `powershell.exe`；COM port 由本機 Windows 的 hub 處理；除了步驟 3～5，還要做步驟 8（產生 `comhub.ini`），以及最後的「SSH 模式：Windows 端」（👤 使用者手動）。
+- 不是 WSL，而且 `SSH_CONNECTION` 有值 → **SSH 模式**（Claude Code 跑在 build server 上）。這台機器不需要 `powershell.exe`；COM port 由本機 Windows 的 hub 處理；除了步驟 3～4，還要做步驟 7（產生 `comhub.ini`），以及最後的「SSH 模式：Windows 端」（👤 使用者手動）。
 - 兩者都不是 → 不支援。
 
 | 失敗的項目 | 處理方式 |
@@ -89,33 +89,9 @@ python3 -c 'import sys; print(sys.version); assert sys.version_info >= (3, 8)'
 chmod +x "$REPO/comd.py" "$REPO/comsend" "$REPO/comput" "$REPO/comhub.py" "$REPO/comtool_mcp.py"
 ```
 
-### 4. 建立 `comd`／`comsend`／`comput` 指令捷徑
+### 4. 註冊 MCP server（給 Claude Code 使用，選用）
 
-捷徑是給輔助工具用的（除錯、自動化，見 README「輔助：除錯與自動化」），Claude 透過 MCP 使用時不需要，可以跳過。SSH 模式下 `comd`、`comsend` 在 build server 上用不到（COM port 在本機 Windows），只需要 `comput`。
-
-選一個在 PATH 上的目錄放捷徑，建議：
-
-- 一般使用者：`~/.local/bin`
-- root 使用者：`/usr/local/bin`
-
-```bash
-BIN_DIR=~/.local/bin
-mkdir -p "$BIN_DIR"
-ls -l "$BIN_DIR/comd" "$BIN_DIR/comsend" "$BIN_DIR/comput" 2>/dev/null   # 先確認有沒有同名檔案
-ln -s "$REPO/comput" "$BIN_DIR/comput"
-# 只有 WSL 模式需要：
-ln -s "$REPO/comd.py" "$BIN_DIR/comd"
-ln -s "$REPO/comsend" "$BIN_DIR/comsend"
-```
-
-- 已經有同名檔案或 symlink 時，先看它指向哪裡（`readlink -f`）。如果是舊位置的 comtool，確認後刪除再重建；如果是別的程式，改用其他目錄或名稱。
-- 確認目錄在 PATH 上：`case ":$PATH:" in *":$BIN_DIR:"*) echo OK;; esac`。不在的話，在 `~/.bashrc` 加入 `export PATH="$HOME/.local/bin:$PATH"`，重開終端機後生效。
-
-`log/` 目錄不在 repo 裡，第一次執行 `comd` 時會自動建立。
-
-### 5. 註冊 MCP server（給 Claude Code 使用，選用）
-
-**5-1. 找到 `claude` 執行檔**
+**4-1. 找到 `claude` 執行檔**
 
 依序找，用第一個找到的：
 
@@ -131,7 +107,7 @@ ls -d ~/.vscode-server*/extensions/anthropic.claude-code-*/resources/native-bina
 
 以下用 `claude` 代表找到的執行檔。
 
-**5-2. 檢查是否已經註冊過**
+**4-2. 檢查是否已經註冊過**
 
 ```bash
 claude mcp list
@@ -142,7 +118,7 @@ claude mcp get comtool
 - 指向舊位置（例如 repo 搬過家）：用 `claude mcp remove -s <原本的 scope> comtool` 移除後再註冊。
 - 某個專案的 `.mcp.json` 裡也有 `comtool` 時，在那個專案中會以 project scope 的設定為準。
 
-**5-3. 選擇 scope 並註冊**
+**4-3. 選擇 scope 並註冊**
 
 | scope | 適用情況 | 設定存放位置 |
 |---|---|---|
@@ -156,11 +132,11 @@ Python 請用**絕對路徑**，避免 Claude Code 啟動 MCP server 時的 PATH
 claude mcp add -s user comtool -- "$(command -v python3)" "$REPO/comtool_mcp.py"
 ```
 
-**5-4. 👤 使用者手動：重開 Claude Code 的 session**
+**4-4. 👤 使用者手動：重開 Claude Code 的 session**
 
 註冊後（以及之後每次更新 `comtool_mcp.py`／`hubclient.py`），要重開 session，`com_*` 工具才會出現或更新。Claude 不能重開自己的 session，請提醒使用者。
 
-### 6. 檢查 Windows 端連線設定（WSL 模式，選用）
+### 5. 檢查 Windows 端連線設定（WSL 模式，選用）
 
 如果要從 Windows 端用 PuTTY／telnet 連 `127.0.0.1:7000+N`，WSL 的 localhost 轉發必須開啟：
 
@@ -171,7 +147,7 @@ grep -i localhostForwarding "$(wslpath "$WINHOME")/.wslconfig" 2>/dev/null
 
 如果看到 `localhostForwarding=false`，Windows 端會連不到；要改的話，把它刪掉或改成 `true`，然後 **👤 使用者手動**在 Windows 執行 `wsl --shutdown`。
 
-### 7. 設定 TFTP 根目錄（WSL 模式，選用）
+### 6. 設定 TFTP 根目錄（WSL 模式，選用）
 
 要用 `com_put_file`／`comput` 傳檔時，hub 要知道 TFTP 根目錄。hub 會自動讀 tftpd64.ini 的 `BaseDirectory`；找不到時，在 `~/.bashrc` 設定環境變數（Windows 路徑也可以，會自動轉換），然後讓 hub 重新啟動（結束 `comhub.py` 的 process，MCP 下次會自動再啟動它）：
 
@@ -179,7 +155,7 @@ grep -i localhostForwarding "$(wslpath "$WINHOME")/.wslconfig" 2>/dev/null
 export COMTOOL_TFTP_ROOT='D:\tftp'
 ```
 
-### 8. 產生 `comhub.ini`（SSH 模式，Claude 代勞）
+### 7. 產生 `comhub.ini`（SSH 模式，Claude 代勞）
 
 `comhub.ini` 是 SSH 模式的個人設定（build server 的帳號、IP、repo 路徑），由本機 Windows 的 hub 讀取。它列在 `.gitignore`，不會進 repo；在 build server 的 repo 目錄產生後，使用者在 W1 用 `scp -r` 複製 repo 時會一起帶到 Windows。
 
@@ -209,7 +185,7 @@ tftp_root =        ; TFTP 根目錄，留空表示自動讀 tftpd64.ini
 
 ## SSH 模式：Windows 端（👤 使用者手動）
 
-build server 上的 Claude 碰不到你的 Windows，以下步驟請自己在本機 Windows 的 PowerShell 執行。`<帳號>`、`<build server IP>`、`<build server 上的 repo 路徑>` 跟步驟 8 產生的 `comhub.ini` 相同（Claude 會告訴你實際的值）。
+build server 上的 Claude 碰不到你的 Windows，以下步驟請自己在本機 Windows 的 PowerShell 執行。`<帳號>`、`<build server IP>`、`<build server 上的 repo 路徑>` 跟步驟 7 產生的 `comhub.ini` 相同（Claude 會告訴你實際的值）。
 
 **W1. 👤 把 repo 複製到 Windows**
 
@@ -217,7 +193,7 @@ build server 上的 Claude 碰不到你的 Windows，以下步驟請自己在本
 scp -r jenda@192.168.2.201:~/tools/comtool comtool
 ```
 
-步驟 8 產生的 `comhub.ini` 會一起複製過來。之後更新時（`comhub.py`、`comd.py`、`hubclient.py`、`bridge.ps1`、`start_comtool.bat` 有修改），重新執行同一個指令覆蓋，再重新啟動 hub（關閉 `start_comtool.bat` 的視窗後再雙擊）。
+步驟 7 產生的 `comhub.ini` 會一起複製過來。之後更新時（`comhub.py`、`comd.py`、`hubclient.py`、`bridge.ps1`、`start_comtool.bat` 有修改），重新執行同一個指令覆蓋，再重新啟動 hub（關閉 `start_comtool.bat` 的視窗後再雙擊）。
 
 **W2. 👤 檢查 Python**
 
@@ -250,14 +226,14 @@ comhub 啟動：windows，監聽 tcp:7000，TFTP 根目錄 ...
 ```
 
 - 使用 comtool 期間**請讓這個視窗保持開啟**；關閉視窗（或按 Ctrl+C）就會結束 hub 與 tunnel。
-- 找不到 `comhub.ini` 時，視窗會顯示要怎麼產生它（回到步驟 8）。
+- 找不到 `comhub.ini` 時，視窗會顯示要怎麼產生它（回到步驟 7）。
 - 連不上 build server 時，視窗會顯示 ssh 的錯誤訊息，hub 會每隔一段時間自動重試；同樣的紀錄也在 `%LOCALAPPDATA%\comtool\log\comhub.log`。
 
 **W5. 確認 tunnel（可以請 Claude 在 build server 上做）**
 
 ```bash
 ls -l <build server 上的 repo 路徑>/comtool.sock   # 應該是 srw-------，擁有者是你
-comput <任一個小檔案>                             # 應該回 [uploaded ...]，檔案出現在 TFTP 根目錄
+<build server 上的 repo 路徑>/comput <任一個小檔案>   # 應該回 [uploaded ...]，檔案出現在 TFTP 根目錄
 ```
 
 tunnel 跟 VSCode 無關：之後 VSCode 斷線、或改用一般 ssh 終端機登入 build server，都不影響 tunnel；SSH 斷線時 hub 會自動重建，並清除 build server 上殘留的 `comtool.sock`。
@@ -275,18 +251,16 @@ printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
 
 - **重開 Claude Code 的 session**，在對話框輸入 `/mcp`，確認 `comtool` 是 connected。VS Code 內建的「MCP SERVERS」清單是 VS Code／Copilot 自己的設定，看不到 comtool。
 - 在 Claude Code 中呼叫 `com_list`，第一行會顯示 hub 的位置（WSL，或本機 Windows 經由 SSH 轉送）與 TFTP 根目錄。
-- 接硬體測試：在 Claude Code 中請 Claude 用 `com_open`／`com_send` 測試（SSH 模式要先雙擊 `start_comtool.bat`）。只測 comd 本身時（輔助用途），WSL 模式執行 `comd COM3` 看到 `READY`，另開終端機 `comsend COM3 "" 2`。用法詳見 [README.md](README.md)。
+- 接硬體測試：在 Claude Code 中請 Claude 用 `com_open`／`com_send` 測試（SSH 模式要先雙擊 `start_comtool.bat`）。只測 comd 本身時（輔助用途），WSL 模式執行 `"$REPO/comd.py" COM3` 看到 `READY`，另開終端機 `"$REPO/comsend" COM3 "" 2`。用法詳見 [README.md](README.md)。
 
 ## 更新或搬移 repo
 
 - 只是 `git pull` 更新：不用重新安裝；如果 `comtool_mcp.py`／`hubclient.py` 有更新，**👤 重開 Claude Code 的 session**。如果 `comhub.py`／`comd.py` 有更新，也要讓 hub 重新啟動（WSL 模式：結束 `comhub.py` 的 process，MCP 下次會自動啟動；SSH 模式：**👤 重做 W1**，再關閉並重新雙擊 `start_comtool.bat`）。
-- 搬移 repo 位置：重建步驟 4 的捷徑，並用 `claude mcp remove -s <scope> comtool` 移除舊註冊，再依步驟 5-3 重新註冊。SSH 模式還要更新 `comhub.ini` 的 `repo`（重做步驟 8），再 **👤 重做 W1**。
+- 搬移 repo 位置：用 `claude mcp remove -s <scope> comtool` 移除舊註冊，再依步驟 4-3 重新註冊。SSH 模式還要更新 `comhub.ini` 的 `repo`（重做步驟 7），再 **👤 重做 W1**。
 
 ## 移除
 
 ```bash
-readlink -f ~/.local/bin/comd ~/.local/bin/comsend ~/.local/bin/comput   # 確認指向本 repo 再刪
-rm ~/.local/bin/comd ~/.local/bin/comsend ~/.local/bin/comput
 claude mcp remove -s user comtool                    # 依當初註冊的 scope
 ```
 

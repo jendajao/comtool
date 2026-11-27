@@ -106,6 +106,7 @@ tftp_root =                        ; TFTP 根目錄，留空表示自動讀 tftp
 - 只有 tftpd64.ini 讀不到時，才需要自己在 Windows 那份 `comhub.ini` 填 `tftp_root`（或請 Claude 在 build server 那份填好再複製）。
 - `start_comtool.bat` 只做三件事：找 Python（先試 `py -3`，再試 `python`）、執行 `comhub.py`、hub 結束後 `pause`，讓錯誤訊息留在畫面上。`comhub.py` 會讀同一個目錄的 `comhub.ini`，命令列參數（`--ssh`、`--tftp-root`）優先；找不到 `comhub.ini` 時會顯示要填哪些欄位後結束。
 - 帳號與 IP 都在 `comhub.ini` 裡，不需要 ssh config。
+- WSL 模式的 hub 會忽略 `comhub.ini` 的 `[ssh]`，只讀 `tftp_root`；repo 裡留著 SSH 模式的 `comhub.ini` 也不影響 WSL 模式。
 - 執行後會開一個 console 視窗，顯示 hub 與 tunnel 的紀錄（同時寫進 `log/comhub.log`）。關閉視窗或按 Ctrl+C 就會結束 hub，並一併結束它啟動的 ssh.exe。
 - 要同時連多台 build server 時，直接執行 `comhub.py` 並重複指定 `--ssh 帳號@IP:<repo>/comtool.sock`。
 
@@ -209,7 +210,7 @@ MCP ─close─▶ hub ─① 結束 comd → bridge 的 stdin 被關閉 → bri
 請依照 INSTALL.md 幫我安裝 comtool
 ```
 
-Claude 會在它執行的那台機器上（WSL，或 build server）完成檢查環境、設定執行權限、建立捷徑、註冊 MCP server，需要選擇的地方會先問你。
+Claude 會在它執行的那台機器上（WSL，或 build server）完成檢查環境、設定執行權限、註冊 MCP server，需要選擇的地方會先問你。
 
 ### ⚠ 需要你手動做的事（Claude 無法代勞）
 
@@ -265,7 +266,7 @@ comd、comsend、PuTTY、comput 這些不經過 Claude 的操作是輔助用途�
 TFTP 根目錄依下列順序決定，hub 啟動時會寫進 `log/comhub.log`，`com_list` 第一行也會顯示：
 
 1. hub 的 `--tftp-root` 參數
-2. `comhub.ini` 的 `tftp_root`（SSH 模式）
+2. `comhub.ini` 的 `tftp_root`（主要用於 SSH 模式；WSL 模式有這個檔案時也會讀）
 3. 環境變數 `COMTOOL_TFTP_ROOT`
 4. tftpd64 的設定檔 `tftpd64.ini` 的 `BaseDirectory`（在 `Program Files\Tftpd64` 等常見位置自動尋找）
 
@@ -343,8 +344,8 @@ claude mcp add -s user comtool -- "$(command -v python3)" <repo 路徑>/comtool_
 
 | 操作 | WSL 模式 | SSH 模式 |
 |---|---|---|
-| 1. 手動啟動 daemon（comd） | **WSL 的 Linux 終端機**：`comd COM3` | **本機 Windows 的 PowerShell**：`python comd.py COM3`（在 `%LOCALAPPDATA%\comtool` 下執行）。**不能在 build server 上執行**，build server 沒有 COM port |
-| 2. comsend 送指令 | WSL 的 Linux 終端機 | 本機 Windows（`python comsend COM3 "" 1`）；build server 上不能用 |
+| 1. 手動啟動 daemon（comd） | **WSL 的 Linux 終端機**：在 repo 目錄執行 `./comd.py COM3` | **本機 Windows 的 PowerShell**：`python comd.py COM3`（在 `%LOCALAPPDATA%\comtool` 下執行）。**不能在 build server 上執行**，build server 沒有 COM port |
+| 2. comsend 送指令 | WSL 的 Linux 終端機（`./comsend COM3 "" 1`） | 本機 Windows（`python comsend COM3 "" 1`）；build server 上不能用 |
 | 3. PuTTY／telnet 一起操作 | 本機 Windows | 本機 Windows |
 | 4. 查看 log | WSL：`<repo>/log/COM3.log` | 本機 Windows：`%LOCALAPPDATA%\comtool\log\COM3.log`（log 在 comd 執行的機器上，不在 build server） |
 | 5. comput 傳檔 | WSL 的 Linux 終端機 | **build server**（要先在本機 Windows 雙擊 `start_comtool.bat`，見「B.」） |
@@ -355,12 +356,12 @@ claude mcp add -s user comtool -- "$(command -v python3)" <repo 路徑>/comtool_
 
 ### 1. 啟動 daemon
 
-**WSL 模式：在 WSL 的 Linux 終端機執行**
+**WSL 模式：在 WSL 的 Linux 終端機、repo 目錄下執行**
 
 ```bash
-comd COM3                      # 預設 115200 baud，監聽 127.0.0.1:7003
-comd COM1 --baud 9600          # 指定 baud rate
-comd COM3 --port 8003          # 指定 TCP port（預設為 7000 + COM 編號）
+./comd.py COM3                 # 預設 115200 baud，監聽 127.0.0.1:7003
+./comd.py COM1 --baud 9600     # 指定 baud rate
+./comd.py COM3 --port 8003     # 指定 TCP port（預設為 7000 + COM 編號）
 ```
 
 **SSH 模式：在本機 Windows 的 PowerShell 執行**（不是在 build server 上）
@@ -383,16 +384,18 @@ READY COM3@115200 tcp://127.0.0.1:7003
 
 ### 2. 用 comsend 送指令
 
+在 repo 目錄執行（SSH 模式在本機 Windows 改用 `python comsend ...`）：
+
 ```bash
-comsend COM3 "show system-info" 2     # 送出指令並自動加 CR，等 2 秒後印出回應
-comsend COM3 "" 1                     # 只按一次 Enter
-comsend --raw COM3 '\x11' 1           # 原樣送出（不加 CR），可用 \xNN 表示控制字元
+./comsend COM3 "show system-info" 2   # 送出指令並自動加 CR，等 2 秒後印出回應
+./comsend COM3 "" 1                   # 只按一次 Enter
+./comsend --raw COM3 '\x11' 1         # 原樣送出（不加 CR），可用 \xNN 表示控制字元
 ```
 
 - 等待秒數預設為 1 秒，輸出較多的指令（例如開機、`show config`）請自行加長。
 - 輸出保留設備送出的 ANSI 跳脫碼，只拿掉 `\r`。要看純文字的話，可以這樣過濾：
   ```bash
-  comsend COM3 "show config" 3 | sed 's/\x1b\[[0-9;]*[A-Za-z]/\n/g'
+  ./comsend COM3 "show config" 3 | sed 's/\x1b\[[0-9;]*[A-Za-z]/\n/g'
   ```
 - 要連到非預設的 TCP port 時，請設定環境變數 `COMSEND_PORT=8003`。
 
@@ -436,8 +439,8 @@ Get-Content -Wait $env:LOCALAPPDATA\comtool\log\COM3.log         # SSH 模式：
 ### 5. 傳檔到 TFTP 根目錄（comput）
 
 ```bash
-comput build/fw.bin              # 傳到 hub 的 TFTP 根目錄，保留原檔名
-comput build/fw.bin fw_test.bin  # 改用新檔名
+<repo>/comput build/fw.bin              # 傳到 hub 的 TFTP 根目錄，保留原檔名
+<repo>/comput build/fw.bin fw_test.bin  # 改用新檔名
 ```
 
 在 WSL 或 build server 上都能用（跟 MCP 一樣經由 hub）。詳見「傳檔（TFTP）」。
@@ -460,7 +463,6 @@ comput build/fw.bin fw_test.bin  # 改用新檔名
 | 啟動時出現 `TCP port 700N 無法使用` | 已經有另一個 comd 在執行（錯誤訊息會列出殘留的 pid，先 `com_close`），或該 port 被其他程式占用。 |
 | 收到亂碼，或只收到 `0x00` | baud rate 不對（預設是 115200），請用 `--baud` 試試其他速率（9600、19200、38400、57600）。 |
 | WSL 裡找不到或無法執行 `powershell.exe` | WSL interop 沒有開啟，請檢查 `/etc/wsl.conf` 的 `[interop]` 設定，然後在 Windows 執行 `wsl --shutdown` 重新啟動 WSL。 |
-| 建立 `comd`／`comsend` 捷徑時已有同名檔案 | 先用 `readlink -f` 看它指向哪裡。是舊位置的 comtool 就刪除後重建；是別的程式就改用其他目錄。 |
 | `comsend` 顯示「無法連到 COMx」 | comd 沒有在執行，或 TCP port 不是預設值（請設定 `COMSEND_PORT`）。 |
 | PuTTY 看不到自己輸入的字 | 請確認 Connection type 選 Telnet，且 Terminal → Local echo 維持 Auto。 |
 | Windows telnet 連不上 | 請確認用的是 `telnet 127.0.0.1 7003`（用空白隔開、用 127.0.0.1）。 |
